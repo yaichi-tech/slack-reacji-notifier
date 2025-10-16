@@ -4,3 +4,7 @@ compatibility_date = "2025-10-16"
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
+
+# Environment variables
+# Set your Slack Bot Token as a secret:
+# wrangler secret put SLACK_BOT_TOKEN
