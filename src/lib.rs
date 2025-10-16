@@ -16,8 +16,6 @@ struct ReactionAddedEvent {
     user: String,
     item: EventItem,
     reaction: String,
-    #[serde(rename = "event_ts")]
-    event_ts: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -32,15 +30,7 @@ struct SlackMessage {
     text: String,
 }
 
-#[derive(Deserialize)]
-struct ChannelInfo {
-    channel: Option<Channel>,
-}
 
-#[derive(Deserialize)]
-struct Channel {
-    name: String,
-}
 
 #[derive(Deserialize)]
 struct MessageHistory {
@@ -51,7 +41,6 @@ struct MessageHistory {
 
 #[derive(Deserialize)]
 struct Message {
-    text: Option<String>,
     user: Option<String>,
 }
 
@@ -122,62 +111,15 @@ async fn get_team_info(token: &str) -> Result<String> {
     // フォールバック: ワークスペース名が取得できない場合
     console_log!("Failed to get workspace domain, using fallback");
     Ok("yourworkspace".to_string())
+}
+
 fn generate_message_url(workspace_domain: &str, channel_id: &str, message_ts: &str) -> String {
     // タイムスタンプから小数点を除去してprefixを追加
     let timestamp_for_url = message_ts.replace(".", "");
     format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url)
 }
 
-async fn get_channel_name(token: &str, channel_id: &str) -> Result<String> {
-    let url = format!("https://slack.com/api/conversations.info?channel={}", channel_id);
 
-    let headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {}", token))?;
-
-    let request = Request::new_with_init(
-        &url,
-        RequestInit::new()
-            .with_method(Method::Get)
-            .with_headers(headers),
-    )?;
-
-    let mut response = Fetch::Request(request).send().await?;
-    let channel_info: ChannelInfo = response.json().await?;
-
-    let channel_name = channel_info.channel
-        .map(|channel| format!("#{}", channel.name))
-        .unwrap_or_else(|| channel_id.to_string());
-
-    Ok(channel_name)
-}
-
-async fn get_message_info(token: &str, channel_id: &str, ts: &str) -> Result<String> {
-    let url = format!(
-        "https://slack.com/api/conversations.history?channel={}&latest={}&limit=1&inclusive=true",
-        channel_id, ts
-    );
-
-    let headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {}", token))?;
-
-    let request = Request::new_with_init(
-        &url,
-        RequestInit::new()
-            .with_method(Method::Get)
-            .with_headers(headers),
-    )?;
-
-    let mut response = Fetch::Request(request).send().await?;
-    let history: MessageHistory = response.json().await?;
-
-    // チェーンした Option の処理
-    let message_text = history.messages
-        .and_then(|messages| messages.first())
-        .and_then(|message| message.text.as_deref())
-        .unwrap_or("(メッセージ内容なし)");
-
-    Ok(format!("「{}」", message_text))
-}
 
 async fn join_channel(token: &str, channel_id: &str) -> Result<()> {
     let headers = Headers::new();
@@ -238,29 +180,7 @@ async fn send_dm(token: &str, user_id: &str, message: &str) -> Result<()> {
     }
 }
 
-fn format_timestamp(ts: &str) -> String {
-    if let Ok(timestamp) = ts.parse::<f64>() {
-        // Unix timestampを秒とナノ秒に分割
-        let seconds = timestamp.trunc() as i64;
-        let nanoseconds = ((timestamp.fract() * 1_000_000_000.0) as u32);
 
-        // UTC時刻を取得（ナノ秒まで含む）
-        let utc_datetime = chrono::DateTime::from_timestamp(seconds, nanoseconds)
-            .unwrap_or_else(|| {
-                console_log!("Failed to parse timestamp: {}, using default", ts);
-                chrono::DateTime::from_timestamp(0, 0).unwrap()
-            });
-
-        // JST（UTC+9）に変換
-        let jst_offset = chrono::FixedOffset::east_opt(9 * 3600).unwrap(); // +9時間
-        let jst_datetime = utc_datetime.with_timezone(&jst_offset);
-
-        jst_datetime.format("%Y年%m月%d日 %H:%M:%S JST").to_string()
-    } else {
-        console_log!("Failed to parse timestamp as f64: {}", ts);
-        ts.to_string()
-    }
-}
 
 fn log_json_response(label: &str, json_text: &str) {
     // Pretty print JSONを試す
@@ -301,131 +221,121 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
 
             if reaction_event.event_type == "reaction_added" {
-                    console_log!("Reaction added event received");
+                console_log!("Reaction added event received");
 
-                    // Check if debug mode is enabled
-                    let debug_mode = env.var("DEBUG_MODE").is_ok();
+                // Check if debug mode is enabled
+                let debug_mode = env.var("DEBUG_MODE").is_ok();
 
-                    // Get the original message author
-                    let message_info = get_message_info(
-                        &slack_token,
-                        &reaction_event.item.channel,
-                        &reaction_event.item.ts,
-                    ).await?;                    // Get user info for the person who added the reaction
-                    let reactor_name = get_user_info(&slack_token, &reaction_event.user).await?;
+                // Get user info for the person who added the reaction
+                let reactor_name = get_user_info(&slack_token, &reaction_event.user).await?;
 
-                    // Get channel name
-                    let channel_name = get_channel_name(&slack_token, &reaction_event.item.channel).await?;
+                // Get workspace domain
+                let workspace_domain = get_team_info(&slack_token).await?;
 
-                    // Get workspace domain
-                    let workspace_domain = get_team_info(&slack_token).await?;
+                // Generate message URL
+                let message_url = generate_message_url(&workspace_domain, &reaction_event.item.channel, &reaction_event.item.ts);
 
-                    // Generate message URL
-                    let message_url = generate_message_url(&workspace_domain, &reaction_event.item.channel, &reaction_event.item.ts);
+                // Create notification message
+                let notification = format!(
+                    ":{}: {}\n{}",
+                    reaction_event.reaction,
+                    reactor_name,
+                    message_url
+                );
 
-                    // Format timestamp
-                    let formatted_time = format_timestamp(&reaction_event.event_ts);
+                // Get the original message to find who posted it
+                let history_url = format!(
+                    "https://slack.com/api/conversations.history?channel={}&latest={}&limit=1&inclusive=true",
+                    reaction_event.item.channel, reaction_event.item.ts
+                );
 
-                    // Create notification message
-                    let notification = format!(
-                        ":{}: {}\n{}",
-                        reaction_event.reaction,
-                        reactor_name,
-                        message_url
-                    );
+                let headers = Headers::new();
+                headers.set("Authorization", &format!("Bearer {}", slack_token))?;
 
-                    // Get the original message to find who posted it
-                    let history_url = format!(
-                        "https://slack.com/api/conversations.history?channel={}&latest={}&limit=1&inclusive=true",
-                        reaction_event.item.channel, reaction_event.item.ts
-                    );
+                let request = Request::new_with_init(
+                    &history_url,
+                    RequestInit::new()
+                        .with_method(Method::Get)
+                        .with_headers(headers),
+                )?;
 
-                    let headers = Headers::new();
-                    headers.set("Authorization", &format!("Bearer {}", slack_token))?;
+                let mut response = Fetch::Request(request).send().await?;
+                let response_text = response.text().await?;
 
-                    let request = Request::new_with_init(
-                        &history_url,
-                        RequestInit::new()
-                            .with_method(Method::Get)
-                            .with_headers(headers),
-                    )?;
+                let history: MessageHistory = serde_json::from_str(&response_text)
+                    .map_err(|e| Error::from(format!("Failed to parse history response: {}", e)))?;
 
-                    let mut response = Fetch::Request(request).send().await?;
-                    let response_text = response.text().await?;
+                if !history.ok {
+                    let error = history.error.as_deref().unwrap_or("Unknown error");
+                    console_log!("Slack API error: {}", error);
 
-                    let history: MessageHistory = serde_json::from_str(&response_text)
-                        .map_err(|e| Error::from(format!("Failed to parse history response: {}", e)))?;
+                    // Try to join the channel if not in channel
+                    if error == "not_in_channel" {
+                        console_log!("Attempting to join channel: {}", reaction_event.item.channel);
+                        if let Ok(_) = join_channel(&slack_token, &reaction_event.item.channel).await {
+                            console_log!("Successfully joined channel, retrying message history...");
 
-                    if !history.ok {
-                        let error = history.error.as_deref().unwrap_or("Unknown error");
-                        console_log!("Slack API error: {}", error);
+                            // Retry getting message history
+                            let headers = Headers::new();
+                            headers.set("Authorization", &format!("Bearer {}", slack_token))?;
 
-                        // Try to join the channel if not in channel
-                        if error == "not_in_channel" {
-                            console_log!("Attempting to join channel: {}", reaction_event.item.channel);
-                            if let Ok(_) = join_channel(&slack_token, &reaction_event.item.channel).await {
-                                console_log!("Successfully joined channel, retrying message history...");
+                            let retry_request = Request::new_with_init(
+                                &history_url,
+                                RequestInit::new()
+                                    .with_method(Method::Get)
+                                    .with_headers(headers),
+                            )?;
 
-                                // Retry getting message history
-                                let headers = Headers::new();
-                                headers.set("Authorization", &format!("Bearer {}", slack_token))?;
+                            let mut retry_response = Fetch::Request(retry_request).send().await?;
+                            let retry_response_text = retry_response.text().await?;
 
-                                let retry_request = Request::new_with_init(
-                                    &history_url,
-                                    RequestInit::new()
-                                        .with_method(Method::Get)
-                                        .with_headers(headers),
-                                )?;
+                            let retry_history: MessageHistory = serde_json::from_str(&retry_response_text)
+                                .map_err(|e| Error::from(format!("Failed to parse retry response: {}", e)))?;
 
-                                let mut retry_response = Fetch::Request(retry_request).send().await?;
-                                let retry_response_text = retry_response.text().await?;
-
-                                let retry_history: MessageHistory = serde_json::from_str(&retry_response_text)
-                                    .map_err(|e| Error::from(format!("Failed to parse retry response: {}", e)))?;
-
-                                // より綺麗な書き方：早期リターンとパターンマッチングの組み合わせ
-                                if !retry_history.ok {
-                                    console_log!("Still failed to get message history after joining channel");
-                                    return Ok(Response::ok("OK"));
-                                }
-
-                                // チェーンした Option の処理
-                                let original_author = retry_history.messages
-                                    .and_then(|messages| messages.first())
-                                    .and_then(|message| message.user.as_ref());
-
-                                if let Some(author) = original_author {
-                                    let should_notify = debug_mode || author != &reaction_event.user;
-
-                                    if should_notify {
-                                        send_dm(&slack_token, author, &notification).await?;
-                                    }
-                                }
-                            } else {
-                                console_log!("Failed to join channel: {}", reaction_event.item.channel);
+                            // より綺麗な書き方：早期リターンとパターンマッチングの組み合わせ
+                            if !retry_history.ok {
+                                console_log!("Still failed to get message history after joining channel");
+                                return Response::ok("OK");
                             }
-                        }
 
-                        console_log!("Skipped notification: Slack API returned error");
-                        return Ok(Response::ok("OK"));
+                            // チェーンした Option の処理
+                            let original_author = retry_history.messages
+                                .as_ref()
+                                .and_then(|messages| messages.first())
+                                .and_then(|message| message.user.as_ref());
+
+                            if let Some(author) = original_author {
+                                let should_notify = debug_mode || author != &reaction_event.user;
+
+                                if should_notify {
+                                    send_dm(&slack_token, author, &notification).await?;
+                                }
+                            }
+                        } else {
+                            console_log!("Failed to join channel: {}", reaction_event.item.channel);
+                        }
                     }
 
-                    // チェーンした Option の処理で綺麗に書く
-                    let original_author = history.messages
-                        .and_then(|messages| messages.first())
-                        .and_then(|message| message.user.as_ref());
+                    console_log!("Skipped notification: Slack API returned error");
+                    return Response::ok("OK");
+                }
 
-                    match original_author {
-                        Some(author) => {
-                            let should_notify = debug_mode || author != &reaction_event.user;
+                // チェーンした Option の処理で綺麗に書く
+                let original_author = history.messages
+                    .as_ref()
+                    .and_then(|messages| messages.first())
+                    .and_then(|message| message.user.as_ref());
 
-                            if should_notify {
-                                send_dm(&slack_token, author, &notification).await?;
-                            }
+                match original_author {
+                    Some(author) => {
+                        let should_notify = debug_mode || author != &reaction_event.user;
+
+                        if should_notify {
+                            send_dm(&slack_token, author, &notification).await?;
                         }
-                        None => {
-                            console_log!("Skipped notification: Could not find original message author");
-                        }
+                    }
+                    None => {
+                        console_log!("Skipped notification: Could not find original message author");
                     }
                 }
             }
