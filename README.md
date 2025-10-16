@@ -26,6 +26,8 @@
 - `reactions:read` - リアクション情報を読む
 - `users:read` - ユーザー情報を読む
 - `channels:read` - チャンネル情報を読む
+- `channels:join` - チャンネルへの自動参加
+- `team:read` - ワークスペース情報を読む（URL生成用）
 
 ### 3. Event Subscriptions の設定
 
@@ -39,6 +41,12 @@
 # Slack Bot Tokenをシークレットに設定
 wrangler secret put SLACK_BOT_TOKEN
 # xoxb-で始まるBot User OAuth Tokenを入力
+```
+
+**デバッグモード（オプション）**:
+開発時に自分の投稿へのリアクションでもテストしたい場合、`.dev.vars`で以下を有効化：
+```toml
+DEBUG_MODE = "true"
 ```
 
 ### 5. デプロイ
