@@ -45,6 +45,18 @@ struct Message {
 }
 
 #[derive(Deserialize)]
+struct ChannelInfo {
+    channel: Option<ChannelDetails>,
+}
+
+#[derive(Deserialize)]
+struct ChannelDetails {
+    name: String,
+    is_ext_shared: Option<bool>,
+    is_shared: Option<bool>,
+}
+
+#[derive(Deserialize)]
 struct UserInfo {
     user: Option<User>,
 }
@@ -114,6 +126,58 @@ async fn get_team_info(token: &str) -> Result<String> {
     console_log!("Failed to get workspace domain, using fallback");
     console_log!("✅ get_team_info completed: fallback domain = yourworkspace");
     Ok("yourworkspace".to_string())
+}
+
+async fn is_external_channel(token: &str, channel_id: &str) -> Result<bool> {
+    let url = format!("https://slack.com/api/conversations.info?channel={}", channel_id);
+
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", token))?;
+
+    let request = Request::new_with_init(
+        &url,
+        RequestInit::new()
+            .with_method(Method::Get)
+            .with_headers(headers),
+    )?;
+
+    let mut response = Fetch::Request(request).send().await?;
+    let response_text = response.text().await?;
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response_text) {
+        // APIエラーチェック
+        if parsed.get("ok").and_then(|ok| ok.as_bool()) == Some(false) {
+            let error = parsed.get("error").and_then(|e| e.as_str()).unwrap_or("unknown");
+            console_log!("Channel info API error: {}", error);
+
+            // channel_not_found は外部チャンネルの可能性が高い
+            // not_in_channel は内部チャンネルでもあり得るので、メイン処理での自動参加に委ねる
+            if error == "channel_not_found" {
+                console_log!("✅ is_external_channel completed: {} -> true (channel not found, likely external)", channel_id);
+                return Ok(true);
+            }
+
+            // not_in_channel の場合は内部チャンネルとして扱い、メイン処理で自動参加を試行
+            if error == "not_in_channel" {
+                console_log!("✅ is_external_channel completed: {} -> false (not in channel, but may be internal)", channel_id);
+                return Ok(false);
+            }
+        }
+
+        // 正常にチャンネル情報が取得できた場合
+        if let Some(channel) = parsed.get("channel") {
+            let is_ext_shared = channel.get("is_ext_shared").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_shared = channel.get("is_shared").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_external = is_ext_shared || is_shared;
+            console_log!("✅ is_external_channel completed: {} -> {} (is_ext_shared: {}, is_shared: {})",
+                        channel_id, is_external, is_ext_shared, is_shared);
+            return Ok(is_external);
+        }
+    }
+
+    // パースエラーやその他のエラーの場合、安全のため外部チャンネルとして扱う
+    console_log!("✅ is_external_channel completed: {} -> true (parse error, treating as external for safety)", channel_id);
+    Ok(true)
 }
 
 fn generate_message_url(workspace_domain: &str, channel_id: &str, message_ts: &str) -> String {
@@ -231,6 +295,23 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 console_log!("Event details: user={}, reaction={}, channel={}, ts={}",
                            reaction_event.user, reaction_event.reaction,
                            reaction_event.item.channel, reaction_event.item.ts);
+
+                // 外部チャンネル（Slack Connect）をチェック - C094K18T5LZ のようなパターン
+                console_log!("📋 Channel ID pattern: {}", reaction_event.item.channel);
+
+                // より確実な外部チャンネルチェック
+                console_log!("🔍 Checking if channel is external...");
+                if let Ok(is_external) = is_external_channel(&slack_token, &reaction_event.item.channel).await {
+                    if is_external {
+                        console_log!("⚠️ Skipping external/Slack Connect channel: {}", reaction_event.item.channel);
+                        console_log!("🏁 === REACTION EVENT PROCESSING COMPLETED (EXTERNAL CHANNEL) ===");
+                        return Response::ok("OK");
+                    } else {
+                        console_log!("✅ Channel is internal, proceeding with notification...");
+                    }
+                } else {
+                    console_log!("⚠️ Could not determine if channel is external, proceeding with caution...");
+                }
 
                 // Check if debug mode is enabled
                 let debug_mode = env.var("DEBUG_MODE").is_ok();
