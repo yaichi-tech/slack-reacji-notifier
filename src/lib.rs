@@ -83,11 +83,11 @@ async fn get_user_info(token: &str, user_id: &str) -> Result<String> {
     let mut response = Fetch::Request(request).send().await?;
     let user_info: UserInfo = response.json().await?;
 
-    if let Some(user) = user_info.user {
-        Ok(user.real_name.unwrap_or(user.name))
-    } else {
-        Ok(user_id.to_string())
-    }
+    let user_name = user_info.user
+        .map(|user| user.real_name.unwrap_or(user.name))
+        .unwrap_or_else(|| user_id.to_string());
+
+    Ok(user_name)
 }
 
 async fn get_team_info(token: &str) -> Result<String> {
@@ -105,18 +105,17 @@ async fn get_team_info(token: &str) -> Result<String> {
     let response_text = response.text().await?;
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response_text) {
-        if let Some(ok) = parsed.get("ok") {
-            if ok.as_bool() == Some(false) {
-                console_log!("Team info API failed: {}", parsed.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error"));
-            }
+        // APIエラーチェック
+        if parsed.get("ok").and_then(|ok| ok.as_bool()) == Some(false) {
+            let error_msg = parsed.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
+            console_log!("Team info API failed: {}", error_msg);
         }
 
-        if let Some(team) = parsed.get("team") {
-            if let Some(domain) = team.get("domain") {
-                if let Some(domain_str) = domain.as_str() {
-                    return Ok(domain_str.to_string());
-                }
-            }
+        // チェーンした処理でドメインを取得
+        if let Some(domain) = parsed.get("team")
+            .and_then(|team| team.get("domain"))
+            .and_then(|domain| domain.as_str()) {
+            return Ok(domain.to_string());
         }
     }
 
@@ -145,11 +144,11 @@ async fn get_channel_name(token: &str, channel_id: &str) -> Result<String> {
     let mut response = Fetch::Request(request).send().await?;
     let channel_info: ChannelInfo = response.json().await?;
 
-    if let Some(channel) = channel_info.channel {
-        Ok(format!("#{}", channel.name))
-    } else {
-        Ok(channel_id.to_string())
-    }
+    let channel_name = channel_info.channel
+        .map(|channel| format!("#{}", channel.name))
+        .unwrap_or_else(|| channel_id.to_string());
+
+    Ok(channel_name)
 }
 
 async fn get_message_info(token: &str, channel_id: &str, ts: &str) -> Result<String> {
@@ -171,14 +170,13 @@ async fn get_message_info(token: &str, channel_id: &str, ts: &str) -> Result<Str
     let mut response = Fetch::Request(request).send().await?;
     let history: MessageHistory = response.json().await?;
 
-    if let Some(messages) = history.messages {
-        if let Some(message) = messages.first() {
-            let text = message.text.as_deref().unwrap_or("(メッセージ内容なし)");
-            return Ok(format!("「{}」", text));
-        }
-    }
+    // チェーンした Option の処理
+    let message_text = history.messages
+        .and_then(|messages| messages.first())
+        .and_then(|message| message.text.as_deref())
+        .unwrap_or("(メッセージ内容なし)");
 
-    Ok("(メッセージが見つかりません)".to_string())
+    Ok(format!("「{}」", message_text))
 }
 
 async fn join_channel(token: &str, channel_id: &str) -> Result<()> {
@@ -266,15 +264,11 @@ fn format_timestamp(ts: &str) -> String {
 
 fn log_json_response(label: &str, json_text: &str) {
     // Pretty print JSONを試す
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_text) {
-        if let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
-            console_log!("{}: {}", label, pretty);
-        } else {
-            console_log!("{}: {}", label, json_text);
-        }
-    } else {
-        console_log!("{}: {}", label, json_text);
-    }
+    let formatted_json = serde_json::from_str::<serde_json::Value>(json_text)
+        .and_then(|parsed| serde_json::to_string_pretty(&parsed))
+        .unwrap_or_else(|_| json_text.to_string());
+
+    console_log!("{}: {}", label, formatted_json);
 }
 
 #[event(fetch)]
@@ -294,15 +288,19 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
         // URL verification challenge
         if event.event_type == "url_verification" {
-            if let Some(challenge) = event.challenge {
-                return Response::ok(challenge);
-            }
+            return match event.challenge {
+                Some(challenge) => Response::ok(challenge),
+                None => Response::error("Missing challenge", 400),
+            };
         }
 
         // Handle reaction_added event
         if event.event_type == "event_callback" {
-            if let Some(reaction_event) = event.event {
-                        if reaction_event.event_type == "reaction_added" {
+            let Some(reaction_event) = event.event else {
+                return Response::ok("OK");
+            };
+
+            if reaction_event.event_type == "reaction_added" {
                     console_log!("Reaction added event received");
 
                     // Check if debug mode is enabled
@@ -385,26 +383,23 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                                 let retry_history: MessageHistory = serde_json::from_str(&retry_response_text)
                                     .map_err(|e| Error::from(format!("Failed to parse retry response: {}", e)))?;
 
-                                if retry_history.ok && retry_history.messages.is_some() {
-                                    if let Some(messages) = retry_history.messages {
-                                        if let Some(message) = messages.first() {
-                                            if let Some(original_author) = &message.user {
-                                                // Check if notification should be sent (same logic as above)
-                                                let should_notify = if debug_mode {
-                                                    true
-                                                } else {
-                                                    original_author != &reaction_event.user
-                                                };
-
-                                                if should_notify {
-                                                    // Use the same notification message that was created earlier
-                                                    send_dm(&slack_token, original_author, &notification).await?;
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
+                                // より綺麗な書き方：早期リターンとパターンマッチングの組み合わせ
+                                if !retry_history.ok {
                                     console_log!("Still failed to get message history after joining channel");
+                                    return Ok(Response::ok("OK"));
+                                }
+
+                                // チェーンした Option の処理
+                                let original_author = retry_history.messages
+                                    .and_then(|messages| messages.first())
+                                    .and_then(|message| message.user.as_ref());
+
+                                if let Some(author) = original_author {
+                                    let should_notify = debug_mode || author != &reaction_event.user;
+
+                                    if should_notify {
+                                        send_dm(&slack_token, author, &notification).await?;
+                                    }
                                 }
                             } else {
                                 console_log!("Failed to join channel: {}", reaction_event.item.channel);
@@ -412,29 +407,25 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                         }
 
                         console_log!("Skipped notification: Slack API returned error");
-                    } else if let Some(messages) = history.messages {
-                        if let Some(message) = messages.first() {
-                            if let Some(original_author) = &message.user {
-                                // Check if notification should be sent
-                                let should_notify = if debug_mode {
-                                    // Debug mode: allow self-reactions
-                                    true
-                                } else {
-                                    // Normal mode: skip self-reactions
-                                    original_author != &reaction_event.user
-                                };
+                        return Ok(Response::ok("OK"));
+                    }
 
-                                if should_notify {
-                                    send_dm(&slack_token, original_author, &notification).await?;
-                                }
-                            } else {
-                                console_log!("Skipped notification: Original message has no user info");
+                    // チェーンした Option の処理で綺麗に書く
+                    let original_author = history.messages
+                        .and_then(|messages| messages.first())
+                        .and_then(|message| message.user.as_ref());
+
+                    match original_author {
+                        Some(author) => {
+                            let should_notify = debug_mode || author != &reaction_event.user;
+
+                            if should_notify {
+                                send_dm(&slack_token, author, &notification).await?;
                             }
-                        } else {
-                            console_log!("Skipped notification: No message found in history");
                         }
-                    } else {
-                        console_log!("Skipped notification: No messages in history response (messages array is null/empty)");
+                        None => {
+                            console_log!("Skipped notification: Could not find original message author");
+                        }
                     }
                 }
             }
