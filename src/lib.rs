@@ -76,6 +76,7 @@ async fn get_user_info(token: &str, user_id: &str) -> Result<String> {
         .map(|user| user.real_name.unwrap_or(user.name))
         .unwrap_or_else(|| user_id.to_string());
 
+    console_log!("✅ get_user_info completed: {} -> {}", user_id, user_name);
     Ok(user_name)
 }
 
@@ -104,19 +105,23 @@ async fn get_team_info(token: &str) -> Result<String> {
         if let Some(domain) = parsed.get("team")
             .and_then(|team| team.get("domain"))
             .and_then(|domain| domain.as_str()) {
+            console_log!("✅ get_team_info completed: domain = {}", domain);
             return Ok(domain.to_string());
         }
     }
 
     // フォールバック: ワークスペース名が取得できない場合
     console_log!("Failed to get workspace domain, using fallback");
+    console_log!("✅ get_team_info completed: fallback domain = yourworkspace");
     Ok("yourworkspace".to_string())
 }
 
 fn generate_message_url(workspace_domain: &str, channel_id: &str, message_ts: &str) -> String {
     // タイムスタンプから小数点を除去してprefixを追加
     let timestamp_for_url = message_ts.replace(".", "");
-    format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url)
+    let url = format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url);
+    console_log!("✅ generate_message_url completed: {}", url);
+    url
 }
 
 
@@ -221,33 +226,45 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
 
             if reaction_event.event_type == "reaction_added" {
+                console_log!("🚀 === REACTION EVENT PROCESSING STARTED ===");
                 console_log!("Reaction added event received");
+                console_log!("Event details: user={}, reaction={}, channel={}, ts={}",
+                           reaction_event.user, reaction_event.reaction,
+                           reaction_event.item.channel, reaction_event.item.ts);
 
                 // Check if debug mode is enabled
                 let debug_mode = env.var("DEBUG_MODE").is_ok();
+                console_log!("Debug mode enabled: {}", debug_mode);
 
                 // Get user info for the person who added the reaction
+                console_log!("🔄 Step 1: Getting reactor user info...");
                 let reactor_name = get_user_info(&slack_token, &reaction_event.user).await?;
 
                 // Get workspace domain
+                console_log!("🔄 Step 2: Getting workspace domain...");
                 let workspace_domain = get_team_info(&slack_token).await?;
 
                 // Generate message URL
+                console_log!("🔄 Step 3: Generating message URL...");
                 let message_url = generate_message_url(&workspace_domain, &reaction_event.item.channel, &reaction_event.item.ts);
 
                 // Create notification message
+                console_log!("🔄 Step 4: Creating notification message...");
                 let notification = format!(
                     ":{}: {}\n{}",
                     reaction_event.reaction,
                     reactor_name,
                     message_url
                 );
+                console_log!("✅ Notification message created: {}", notification);
 
                 // Get the original message to find who posted it
+                console_log!("🔄 Step 5: Getting message history to find original author...");
                 let history_url = format!(
                     "https://slack.com/api/conversations.history?channel={}&latest={}&limit=1&inclusive=true",
                     reaction_event.item.channel, reaction_event.item.ts
                 );
+                console_log!("📡 API Request URL: {}", history_url);
 
                 let headers = Headers::new();
                 headers.set("Authorization", &format!("Bearer {}", slack_token))?;
@@ -259,11 +276,13 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                         .with_headers(headers),
                 )?;
 
+                console_log!("📡 Sending history API request...");
                 let mut response = Fetch::Request(request).send().await?;
                 let response_text = response.text().await?;
 
                 let history: MessageHistory = serde_json::from_str(&response_text)
                     .map_err(|e| Error::from(format!("Failed to parse history response: {}", e)))?;
+                console_log!("✅ History API response parsed successfully");
 
                 if !history.ok {
                     let error = history.error.as_deref().unwrap_or("Unknown error");
@@ -299,17 +318,29 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                             }
 
                             // チェーンした Option の処理
+                            console_log!("Processing retry message history: messages count = {}",
+                                       retry_history.messages.as_ref().map(|m| m.len()).unwrap_or(0));
+
                             let original_author = retry_history.messages
                                 .as_ref()
                                 .and_then(|messages| messages.first())
                                 .and_then(|message| message.user.as_ref());
 
                             if let Some(author) = original_author {
+                                console_log!("Found original message author after retry: {}", author);
                                 let should_notify = debug_mode || author != &reaction_event.user;
+                                console_log!("Should notify after retry? {} (debug_mode: {}, same_user: {})",
+                                           should_notify, debug_mode, author == &reaction_event.user);
 
                                 if should_notify {
+                                    console_log!("🔄 Step 6 (Retry): Sending notification to {} after retry", author);
                                     send_dm(&slack_token, author, &notification).await?;
+                                    console_log!("🎉 NOTIFICATION SENT SUCCESSFULLY AFTER RETRY!");
+                                } else {
+                                    console_log!("⏭️ Skipped notification after retry: User reacted to their own message");
                                 }
+                            } else {
+                                console_log!("No original author found after retry");
                             }
                         } else {
                             console_log!("Failed to join channel: {}", reaction_event.item.channel);
@@ -321,6 +352,9 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 }
 
                 // チェーンした Option の処理で綺麗に書く
+                console_log!("Processing message history: messages count = {}",
+                           history.messages.as_ref().map(|m| m.len()).unwrap_or(0));
+
                 let original_author = history.messages
                     .as_ref()
                     .and_then(|messages| messages.first())
@@ -328,19 +362,28 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                 match original_author {
                     Some(author) => {
+                        console_log!("Found original message author: {}", author);
                         let should_notify = debug_mode || author != &reaction_event.user;
+                        console_log!("Should notify? {} (debug_mode: {}, same_user: {})",
+                                   should_notify, debug_mode, author == &reaction_event.user);
 
                         if should_notify {
+                            console_log!("🔄 Step 6: Sending notification to {}", author);
                             send_dm(&slack_token, author, &notification).await?;
+                            console_log!("🎉 NOTIFICATION SENT SUCCESSFULLY!");
+                        } else {
+                            console_log!("⏭️ Skipped notification: User reacted to their own message");
                         }
                     }
                     None => {
-                        console_log!("Skipped notification: Could not find original message author");
+                        console_log!("❌ Skipped notification: Could not find original message author");
                     }
                 }
+                console_log!("🏁 === REACTION EVENT PROCESSING COMPLETED ===");
             }
         }
 
+        console_log!("📤 Returning OK response");
         Response::ok("OK")
     } else if url.path() == "/" {
         Response::ok("Slack Reacji Notifier is running!")
