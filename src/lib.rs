@@ -104,9 +104,6 @@ async fn get_team_info(token: &str) -> Result<String> {
     let mut response = Fetch::Request(request).send().await?;
     let response_text = response.text().await?;
 
-    // デバッグ用ログ
-    log_json_response("Team Info API Response", &response_text);
-
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response_text) {
         if let Some(ok) = parsed.get("ok") {
             if ok.as_bool() == Some(false) {
@@ -115,36 +112,21 @@ async fn get_team_info(token: &str) -> Result<String> {
         }
 
         if let Some(team) = parsed.get("team") {
-            console_log!("Team object found in response");
             if let Some(domain) = team.get("domain") {
                 if let Some(domain_str) = domain.as_str() {
-                    console_log!("Successfully extracted workspace domain: {}", domain_str);
                     return Ok(domain_str.to_string());
-                } else {
-                    console_log!("Domain field exists but is not a string");
                 }
-            } else {
-                console_log!("No 'domain' field in team object");
             }
-        } else {
-            console_log!("No 'team' object in response");
         }
-    } else {
-        console_log!("Failed to parse team info response as JSON");
     }
 
     // フォールバック: ワークスペース名が取得できない場合
-    console_log!("Using fallback workspace domain: yourworkspace");
+    console_log!("Failed to get workspace domain, using fallback");
     Ok("yourworkspace".to_string())
-}
-
 fn generate_message_url(workspace_domain: &str, channel_id: &str, message_ts: &str) -> String {
     // タイムスタンプから小数点を除去してprefixを追加
     let timestamp_for_url = message_ts.replace(".", "");
-    let url = format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url);
-    console_log!("Generated message URL: {} (workspace: {}, channel: {}, ts: {})",
-                 url, workspace_domain, channel_id, message_ts);
-    url
+    format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url)
 }
 
 async fn get_channel_name(token: &str, channel_id: &str) -> Result<String> {
@@ -275,10 +257,6 @@ fn format_timestamp(ts: &str) -> String {
         let jst_offset = chrono::FixedOffset::east_opt(9 * 3600).unwrap(); // +9時間
         let jst_datetime = utc_datetime.with_timezone(&jst_offset);
 
-        // デバッグ用ログ
-        console_log!("Timestamp conversion: {} -> UTC: {} -> JST: {}",
-                     ts, utc_datetime, jst_datetime);
-
         jst_datetime.format("%Y年%m月%d日 %H:%M:%S JST").to_string()
     } else {
         console_log!("Failed to parse timestamp as f64: {}", ts);
@@ -329,9 +307,6 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                     // Check if debug mode is enabled
                     let debug_mode = env.var("DEBUG_MODE").is_ok();
-                    if debug_mode {
-                        console_log!("DEBUG_MODE is enabled - self-reactions will be notified");
-                    }
 
                     // Get the original message author
                     let message_info = get_message_info(
@@ -379,7 +354,6 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                     let mut response = Fetch::Request(request).send().await?;
                     let response_text = response.text().await?;
-                    log_json_response("API Response", &response_text);
 
                     let history: MessageHistory = serde_json::from_str(&response_text)
                         .map_err(|e| Error::from(format!("Failed to parse history response: {}", e)))?;
@@ -407,7 +381,6 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                                 let mut retry_response = Fetch::Request(retry_request).send().await?;
                                 let retry_response_text = retry_response.text().await?;
-                                log_json_response("Retry API Response", &retry_response_text);
 
                                 let retry_history: MessageHistory = serde_json::from_str(&retry_response_text)
                                     .map_err(|e| Error::from(format!("Failed to parse retry response: {}", e)))?;
@@ -424,15 +397,8 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                                                 };
 
                                                 if should_notify {
-                                                    if original_author == &reaction_event.user && debug_mode {
-                                                        console_log!("DEBUG: Sending DM notification to user (self-reaction after join): {}", original_author);
-                                                    } else {
-                                                        console_log!("Sending DM notification to user (after join): {}", original_author);
-                                                    }
                                                     // Use the same notification message that was created earlier
                                                     send_dm(&slack_token, original_author, &notification).await?;
-                                                } else {
-                                                    console_log!("Skipped notification: User {} reacted to their own message (after join, debug_mode={})", original_author, debug_mode);
                                                 }
                                             }
                                         }
@@ -459,14 +425,7 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
                                 };
 
                                 if should_notify {
-                                    if original_author == &reaction_event.user && debug_mode {
-                                        console_log!("DEBUG: Sending DM notification to user (self-reaction): {}", original_author);
-                                    } else {
-                                        console_log!("Sending DM notification to user: {}", original_author);
-                                    }
                                     send_dm(&slack_token, original_author, &notification).await?;
-                                } else {
-                                    console_log!("Skipped notification: User {} reacted to their own message (debug_mode={})", original_author, debug_mode);
                                 }
                             } else {
                                 console_log!("Skipped notification: Original message has no user info");
