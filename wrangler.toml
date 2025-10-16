@@ -1,0 +1,6 @@
+name = "slack-reacji-notifier"
+main = "build/index.js"
+compatibility_date = "2025-10-16"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
