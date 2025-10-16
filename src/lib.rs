@@ -45,18 +45,6 @@ struct Message {
 }
 
 #[derive(Deserialize)]
-struct ChannelInfo {
-    channel: Option<ChannelDetails>,
-}
-
-#[derive(Deserialize)]
-struct ChannelDetails {
-    name: String,
-    is_ext_shared: Option<bool>,
-    is_shared: Option<bool>,
-}
-
-#[derive(Deserialize)]
 struct UserInfo {
     user: Option<User>,
 }
