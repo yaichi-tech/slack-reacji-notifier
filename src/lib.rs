@@ -104,24 +104,47 @@ async fn get_team_info(token: &str) -> Result<String> {
     let mut response = Fetch::Request(request).send().await?;
     let response_text = response.text().await?;
 
+    // デバッグ用ログ
+    log_json_response("Team Info API Response", &response_text);
+
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response_text) {
-        if let Some(team) = parsed.get("team") {
-            if let Some(domain) = team.get("domain") {
-                if let Some(domain_str) = domain.as_str() {
-                    return Ok(domain_str.to_string());
-                }
+        if let Some(ok) = parsed.get("ok") {
+            if ok.as_bool() == Some(false) {
+                console_log!("Team info API failed: {}", parsed.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error"));
             }
         }
+
+        if let Some(team) = parsed.get("team") {
+            console_log!("Team object found in response");
+            if let Some(domain) = team.get("domain") {
+                if let Some(domain_str) = domain.as_str() {
+                    console_log!("Successfully extracted workspace domain: {}", domain_str);
+                    return Ok(domain_str.to_string());
+                } else {
+                    console_log!("Domain field exists but is not a string");
+                }
+            } else {
+                console_log!("No 'domain' field in team object");
+            }
+        } else {
+            console_log!("No 'team' object in response");
+        }
+    } else {
+        console_log!("Failed to parse team info response as JSON");
     }
 
     // フォールバック: ワークスペース名が取得できない場合
+    console_log!("Using fallback workspace domain: yourworkspace");
     Ok("yourworkspace".to_string())
 }
 
 fn generate_message_url(workspace_domain: &str, channel_id: &str, message_ts: &str) -> String {
     // タイムスタンプから小数点を除去してprefixを追加
     let timestamp_for_url = message_ts.replace(".", "");
-    format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url)
+    let url = format!("https://{}.slack.com/archives/{}/p{}", workspace_domain, channel_id, timestamp_for_url);
+    console_log!("Generated message URL: {} (workspace: {}, channel: {}, ts: {})",
+                 url, workspace_domain, channel_id, message_ts);
+    url
 }
 
 async fn get_channel_name(token: &str, channel_id: &str) -> Result<String> {
@@ -332,12 +355,9 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                     // Create notification message
                     let notification = format!(
-                        "🎉 リアクション通知\n\n✨ {}さんがあなたの投稿にリアクションしました\n⏰ 時刻: {}\n📍 チャンネル: {}\n💬 投稿内容: {}\n🎭 リアクション: :{}: \n🔗 投稿を見る: {}",
-                        reactor_name,
-                        formatted_time,
-                        channel_name,
-                        message_info,
+                        ":{}: {}\n{}",
                         reaction_event.reaction,
+                        reactor_name,
                         message_url
                     );
 
