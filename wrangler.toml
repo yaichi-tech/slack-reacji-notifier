@@ -10,3 +10,8 @@ command = "cargo install -q worker-build && worker-build --release"
 enabled = true
 head_sampling_rate = 1
 invocation_logs = true
+
+# [vars]
+# 絵文字登録通知先チャンネルID（#reacji-release など）
+# EMOJI_NOTIFICATION_CHANNEL = "C0XXXXXXX"
+# 本番環境では wrangler secret put EMOJI_NOTIFICATION_CHANNEL で設定
