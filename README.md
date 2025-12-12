@@ -1,123 +1,123 @@
 # Slack Reacji Notifier Bot
 
-Slackのリアクション・絵文字に関する通知を行うBotです。
+A Slack bot that sends notifications about reactions and emoji events.
 
-## 機能
+## Features
 
-### 1. リアクション通知
-誰かがあなたの投稿にリアクションすると、DMで通知します：
-- リアクションの絵文字
-- リアクションしたユーザー名
-- 元の投稿へのリンク
+### 1. Reaction Notifications
+When someone reacts to your message, you'll receive a DM notification with:
+- The reaction emoji
+- The name of the user who reacted
+- A link to the original message
 
-### 2. 絵文字登録通知
-新しいカスタム絵文字がワークスペースに追加されると、指定チャンネルに通知します：
-- 通知形式: `:new_emoji:  :new_emoji:  :new_emoji:`
+### 2. Emoji Registration Notifications
+When a new custom emoji is added to the workspace, a notification is sent to a designated channel:
+- Notification format: `:new_emoji:  :new_emoji:  :new_emoji:`
 
 ---
 
-## セットアップ
+## Setup
 
-### 1. Slack App の作成
+### 1. Create a Slack App
 
-1. [Slack API](https://api.slack.com/apps) にアクセス
-2. "Create New App" → "From scratch"
-3. App名とWorkspaceを選択
+1. Go to [Slack API](https://api.slack.com/apps)
+2. Click "Create New App" → "From scratch"
+3. Choose an App name and Workspace
 
-### 2. OAuth & Permissions の設定
+### 2. Configure OAuth & Permissions
 
-以下のBot Token Scopesを追加：
+Add the following Bot Token Scopes:
 
-| スコープ | 用途 |
-|---------|------|
-| `channels:history` | チャンネルのメッセージ履歴を読む |
-| `chat:write` | メッセージを送信 |
-| `reactions:read` | リアクション情報を読む |
-| `users:read` | ユーザー情報を読む |
-| `channels:read` | チャンネル情報を読む |
-| `channels:join` | チャンネルへの自動参加 |
-| `team:read` | ワークスペース情報を読む |
-| `emoji:read` | 絵文字情報を読む（絵文字登録通知用） |
+| Scope | Purpose |
+|-------|---------|
+| `channels:history` | Read channel message history |
+| `chat:write` | Send messages |
+| `reactions:read` | Read reaction information |
+| `users:read` | Read user information |
+| `channels:read` | Read channel information |
+| `channels:join` | Auto-join channels |
+| `team:read` | Read workspace information |
+| `emoji:read` | Read emoji information (for emoji notifications) |
 
-### 3. Event Subscriptions の設定
+### 3. Configure Event Subscriptions
 
-1. Event Subscriptions を有効にする
+1. Enable Event Subscriptions
 2. Request URL: `https://your-worker-domain.workers.dev/slack/events`
-3. Subscribe to bot events に以下を追加：
-   - `reaction_added` - リアクション通知用
-   - `emoji_changed` - 絵文字登録通知用
+3. Add the following to "Subscribe to bot events":
+   - `reaction_added` - For reaction notifications
+   - `emoji_changed` - For emoji registration notifications
 
-### 4. アプリをインストール
+### 4. Install the App
 
-1. "Install App" でワークスペースにインストール
-2. `xoxb-` で始まる **Bot User OAuth Token** をコピー
+1. Go to "Install App" and install to your workspace
+2. Copy the **Bot User OAuth Token** (starts with `xoxb-`)
 
 ---
 
-## デプロイ手順
+## Deployment
 
-### Step 1: Slack Bot Token を設定
+### Step 1: Set Slack Bot Token
 
 ```bash
 wrangler secret put SLACK_BOT_TOKEN
-# プロンプトで xoxb-... のトークンを入力
+# Enter the xoxb-... token at the prompt
 ```
 
-### Step 2: 絵文字通知チャンネルを設定（オプション）
+### Step 2: Set Emoji Notification Channel (Optional)
 
-絵文字登録通知を有効にする場合：
+To enable emoji registration notifications:
 
 ```bash
 wrangler secret put EMOJI_NOTIFICATION_CHANNEL
-# プロンプトでチャンネルID（例: C0123456789）を入力
+# Enter the channel ID (e.g., C0123456789) at the prompt
 ```
 
-チャンネルIDの確認方法：
-1. Slackでチャンネルを右クリック → "チャンネル詳細を表示"
-2. 最下部の "チャンネルID" をコピー
+How to find the channel ID:
+1. Right-click on the channel in Slack → "View channel details"
+2. Copy the "Channel ID" at the bottom
 
-### Step 3: デプロイ
+### Step 3: Deploy
 
 ```bash
 npx wrangler deploy
 ```
 
-### Step 4: Botをチャンネルに招待
+### Step 4: Invite the Bot to a Channel
 
-通知先チャンネル（例: `#reacji-release`）にBotを招待：
+Invite the bot to the notification channel (e.g., `#reacji-release`):
 ```
 /invite @your-bot-name
 ```
 
 ---
 
-## 環境変数一覧
+## Environment Variables
 
-| 変数名 | 必須 | 説明 |
-|-------|------|------|
+| Variable | Required | Description |
+|----------|----------|-------------|
 | `SLACK_BOT_TOKEN` | Yes | Slack Bot Token (`xoxb-...`) |
-| `EMOJI_NOTIFICATION_CHANNEL` | No | 絵文字通知先チャンネルID |
-| `DEBUG_MODE` | No | `true` で自己リアクションも通知 |
+| `EMOJI_NOTIFICATION_CHANNEL` | No | Channel ID for emoji notifications |
+| `DEBUG_MODE` | No | Set to `true` to notify self-reactions |
 
 ---
 
-## 開発
+## Development
 
-### ローカル開発
+### Local Development
 
 ```bash
-# .dev.vars に開発用の環境変数を設定
+# Set development environment variables in .dev.vars
 cat > .dev.vars << EOF
 SLACK_BOT_TOKEN=xoxb-your-dev-token
 EMOJI_NOTIFICATION_CHANNEL=C0123456789
 DEBUG_MODE=true
 EOF
 
-# 開発サーバーを起動
+# Start the development server
 npx wrangler dev
 ```
 
-### ログ確認
+### View Logs
 
 ```bash
 npx wrangler tail
@@ -125,8 +125,8 @@ npx wrangler tail
 
 ---
 
-## 注意事項
+## Notes
 
-- 自分の投稿に自分でリアクションしても通知は送られません（DEBUG_MODE=true の場合を除く）
-- Botが参加していないプライベートチャンネルでは動作しません
-- Slack Connectの外部チャンネルでは動作しません
+- You won't receive notifications for reactions on your own messages (unless DEBUG_MODE=true)
+- The bot won't work in private channels it hasn't joined
+- The bot doesn't work in Slack Connect external channels
