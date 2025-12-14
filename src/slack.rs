@@ -127,6 +127,42 @@ pub async fn get_message_history(token: &str, channel_id: &str, message_ts: &str
     Ok(history)
 }
 
+pub async fn get_thread_replies(token: &str, channel_id: &str, thread_ts: &str, reply_ts: &str) -> Result<MessageHistory> {
+    let url = format!(
+        "https://slack.com/api/conversations.replies?channel={}&ts={}",
+        channel_id, thread_ts
+    );
+
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", token))?;
+
+    let request = Request::new_with_init(
+        &url,
+        RequestInit::new()
+            .with_method(Method::Get)
+            .with_headers(headers),
+    )?;
+
+    let mut response = Fetch::Request(request).send().await?;
+    let response_text = response.text().await?;
+
+    let mut replies: MessageHistory = serde_json::from_str(&response_text)
+        .map_err(|e| Error::from(format!("Failed to parse replies response: {}", e)))?;
+
+    // Filter to find the specific reply message
+    if let Some(ref mut messages) = replies.messages {
+        messages.retain(|msg| {
+            if let Some(ref msg_ts) = msg.ts {
+                msg_ts == reply_ts
+            } else {
+                false
+            }
+        });
+    }
+
+    Ok(replies)
+}
+
 pub async fn join_channel(token: &str, channel_id: &str) -> Result<()> {
     let headers = Headers::new();
     headers.set("Authorization", &format!("Bearer {}", token))?;

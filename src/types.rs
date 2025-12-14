@@ -22,6 +22,7 @@ pub struct ReactionAddedEvent {
 pub struct EventItem {
     pub channel: String,
     pub ts: String,
+    pub thread_ts: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -44,6 +45,7 @@ pub struct MessageHistory {
 #[derive(Deserialize)]
 pub struct Message {
     pub user: Option<String>,
+    pub ts: Option<String>,
 }
 
 #[derive(Deserialize)]
