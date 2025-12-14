@@ -3,11 +3,7 @@ use crate::types::*;
 
 /// Checks if a message is a threaded reply (not the parent message)
 pub fn is_threaded_reply(thread_ts: Option<&str>, message_ts: &str) -> bool {
-    if let Some(thread_ts_val) = thread_ts {
-        thread_ts_val != message_ts
-    } else {
-        false
-    }
+    thread_ts.map_or(false, |ts| ts != message_ts)
 }
 
 pub async fn get_user_info(token: &str, user_id: &str) -> Result<String> {
@@ -160,13 +156,7 @@ pub async fn get_thread_replies(token: &str, channel_id: &str, thread_ts: &str, 
 
     // Filter to find the specific reply message
     if let Some(ref mut messages) = replies.messages {
-        messages.retain(|msg| {
-            if let Some(ref msg_ts) = msg.ts {
-                msg_ts == reply_ts
-            } else {
-                false
-            }
-        });
+        messages.retain(|msg| msg.ts.as_ref().map_or(false, |ts| ts == reply_ts));
         
         // Log if the specific message was not found
         if messages.is_empty() {
