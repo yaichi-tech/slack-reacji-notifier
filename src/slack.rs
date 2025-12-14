@@ -1,6 +1,15 @@
 use worker::*;
 use crate::types::*;
 
+/// Checks if a message is a threaded reply (not the parent message)
+pub fn is_threaded_reply(thread_ts: Option<&str>, message_ts: &str) -> bool {
+    if let Some(thread_ts_val) = thread_ts {
+        thread_ts_val != message_ts
+    } else {
+        false
+    }
+}
+
 pub async fn get_user_info(token: &str, user_id: &str) -> Result<String> {
     let url = format!("https://slack.com/api/users.info?user={}", user_id);
 
@@ -158,6 +167,11 @@ pub async fn get_thread_replies(token: &str, channel_id: &str, thread_ts: &str, 
                 false
             }
         });
+        
+        // Log if the specific message was not found
+        if messages.is_empty() {
+            console_log!("⚠️ Specific message {} not found in thread {}", reply_ts, thread_ts);
+        }
     }
 
     Ok(replies)

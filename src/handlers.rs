@@ -143,12 +143,11 @@ async fn handle_reaction_added(
                 let ts = ts.to_string();
                 let thread_ts = thread_ts.map(|s| s.to_string());
                 async move {
-                    // If thread_ts is present and different from ts, this is a threaded reply
-                    if let Some(ref thread_ts_val) = thread_ts {
-                        if thread_ts_val != &ts {
-                            console_log!("Fetching threaded message: thread_ts={}, ts={}", thread_ts_val, ts);
-                            return slack::get_thread_replies(&token, &ch, thread_ts_val, &ts).await;
-                        }
+                    // Check if this is a threaded reply (not the parent message)
+                    if slack::is_threaded_reply(thread_ts.as_deref(), &ts) {
+                        let thread_ts_val = thread_ts.as_ref().unwrap();
+                        console_log!("Fetching threaded message: thread_ts={}, ts={}", thread_ts_val, ts);
+                        return slack::get_thread_replies(&token, &ch, thread_ts_val, &ts).await;
                     }
                     // Otherwise, fetch as regular message
                     slack::get_message_history(&token, &ch, &ts).await
