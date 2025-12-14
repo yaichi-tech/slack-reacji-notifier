@@ -1,6 +1,11 @@
 use worker::*;
 use crate::types::*;
 
+/// Checks if a message is a threaded reply (not the parent message)
+pub fn is_threaded_reply(thread_ts: Option<&str>, message_ts: &str) -> bool {
+    thread_ts.map_or(false, |ts| ts != message_ts)
+}
+
 pub async fn get_user_info(token: &str, user_id: &str) -> Result<String> {
     let url = format!("https://slack.com/api/users.info?user={}", user_id);
 
@@ -125,6 +130,41 @@ pub async fn get_message_history(token: &str, channel_id: &str, message_ts: &str
         .map_err(|e| Error::from(format!("Failed to parse history response: {}", e)))?;
 
     Ok(history)
+}
+
+pub async fn get_thread_replies(token: &str, channel_id: &str, thread_ts: &str, reply_ts: &str) -> Result<MessageHistory> {
+    let url = format!(
+        "https://slack.com/api/conversations.replies?channel={}&ts={}",
+        channel_id, thread_ts
+    );
+
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", token))?;
+
+    let request = Request::new_with_init(
+        &url,
+        RequestInit::new()
+            .with_method(Method::Get)
+            .with_headers(headers),
+    )?;
+
+    let mut response = Fetch::Request(request).send().await?;
+    let response_text = response.text().await?;
+
+    let mut replies: MessageHistory = serde_json::from_str(&response_text)
+        .map_err(|e| Error::from(format!("Failed to parse replies response: {}", e)))?;
+
+    // Filter to find the specific reply message
+    if let Some(ref mut messages) = replies.messages {
+        messages.retain(|msg| msg.ts.as_ref().map_or(false, |ts| ts == reply_ts));
+        
+        // Log if the specific message was not found
+        if messages.is_empty() {
+            console_log!("⚠️ Specific message {} not found in thread {}", reply_ts, thread_ts);
+        }
+    }
+
+    Ok(replies)
 }
 
 pub async fn join_channel(token: &str, channel_id: &str) -> Result<()> {

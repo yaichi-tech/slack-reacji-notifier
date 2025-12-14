@@ -40,7 +40,7 @@ where
     Fut2: Future<Output = Result<String>>,
     F3: FnOnce(&str) -> Fut3,
     Fut3: Future<Output = Result<bool>>,
-    F4: FnOnce(&str, &str) -> Fut4,
+    F4: FnOnce(&str, &str, Option<&str>) -> Fut4,
     Fut4: Future<Output = Result<Option<String>>>,
     F5: FnOnce(&str, &str) -> Fut5,
     Fut5: Future<Output = Result<()>>,
@@ -87,7 +87,7 @@ where
 
     // 元メッセージの作成者を取得
     console_log!("🔄 Step 5: Getting original message author...");
-    let author = get_message_author(&event.item.channel, &event.item.ts).await?;
+    let author = get_message_author(&event.item.channel, &event.item.ts, event.item.thread_ts.as_deref()).await?;
 
     match author {
         Some(author_id) => {
@@ -117,17 +117,18 @@ where
 pub async fn get_message_author_with_retry<F1, F2, Fut1, Fut2>(
     channel_id: &str,
     message_ts: &str,
+    thread_ts: Option<&str>,
     get_history: F1,
     join_channel: F2,
 ) -> Result<Option<String>>
 where
-    F1: Fn(&str, &str) -> Fut1,
+    F1: Fn(&str, &str, Option<&str>) -> Fut1,
     Fut1: Future<Output = Result<MessageHistory>>,
     F2: FnOnce(&str) -> Fut2,
     Fut2: Future<Output = Result<()>>,
 {
     console_log!("📡 Getting message history...");
-    let history = get_history(channel_id, message_ts).await?;
+    let history = get_history(channel_id, message_ts, thread_ts).await?;
 
     if !history.ok {
         let error = history.error.as_deref().unwrap_or("Unknown error");
@@ -137,7 +138,7 @@ where
             console_log!("Attempting to join channel: {}", channel_id);
             if join_channel(channel_id).await.is_ok() {
                 console_log!("Successfully joined channel, retrying message history...");
-                let retry_history = get_history(channel_id, message_ts).await?;
+                let retry_history = get_history(channel_id, message_ts, thread_ts).await?;
 
                 if !retry_history.ok {
                     console_log!("Still failed to get message history after joining channel");

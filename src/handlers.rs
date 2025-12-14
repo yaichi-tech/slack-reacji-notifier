@@ -131,16 +131,28 @@ async fn handle_reaction_added(
         async move { slack::is_external_channel(&token, &channel_id).await }
     };
 
-    let get_message_author = |channel_id: &str, message_ts: &str| {
+    let get_message_author = |channel_id: &str, message_ts: &str, thread_ts: Option<&str>| {
         let token = token.clone();
         let channel_id = channel_id.to_string();
         let message_ts = message_ts.to_string();
+        let thread_ts = thread_ts.map(|s| s.to_string());
         async move {
-            let get_history = |ch: &str, ts: &str| {
+            let get_history = |ch: &str, ts: &str, thread_ts: Option<&str>| {
                 let token = token.clone();
                 let ch = ch.to_string();
                 let ts = ts.to_string();
-                async move { slack::get_message_history(&token, &ch, &ts).await }
+                let thread_ts = thread_ts.map(|s| s.to_string());
+                async move {
+                    // Check if this is a threaded reply (not the parent message)
+                    if let Some(ref thread_ts_val) = thread_ts {
+                        if slack::is_threaded_reply(Some(thread_ts_val), &ts) {
+                            console_log!("Fetching threaded message: thread_ts={}, ts={}", thread_ts_val, ts);
+                            return slack::get_thread_replies(&token, &ch, thread_ts_val, &ts).await;
+                        }
+                    }
+                    // Otherwise, fetch as regular message
+                    slack::get_message_history(&token, &ch, &ts).await
+                }
             };
 
             let join_channel = |ch: &str| {
@@ -149,7 +161,7 @@ async fn handle_reaction_added(
                 async move { slack::join_channel(&token, &ch).await }
             };
 
-            usecases::get_message_author_with_retry(&channel_id, &message_ts, get_history, join_channel).await
+            usecases::get_message_author_with_retry(&channel_id, &message_ts, thread_ts.as_deref(), get_history, join_channel).await
         }
     };
 
